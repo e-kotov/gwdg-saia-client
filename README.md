@@ -61,6 +61,11 @@ Run the script without arguments to see the help menu:
 ./saia.sh limits
 ```
 
+**Known limitation:** SAIA exposes rate-limit usage through HTTP response headers, but
+the service does not appear to provide a zero-cost quota probe. Running
+`./saia.sh limits` sends a header-only API probe without an inference payload, so
+it may still spend one request attempt from your SAIA rate-limit quota.
+
 **Convert a PDF to Markdown (via Docling):**
 ```bash
 ./saia.sh convert document.pdf > document.md

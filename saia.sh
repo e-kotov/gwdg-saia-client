@@ -95,6 +95,11 @@ show_help() {
   echo "  $0 chat \"You are a poet\" \"Write a poem about Bash\""
   echo "  cat file.txt | $0 chat \"Summarize this\" -"
   echo ""
+  echo "Limit note:"
+  echo "  $0 limits retrieves quota from response headers, but SAIA does"
+  echo "  not appear to provide a zero-cost quota probe. It sends no"
+  echo "  inference payload, but may still spend one request attempt."
+  echo ""
 }
 
 # --- Service Commands ---
@@ -114,11 +119,11 @@ list_models() {
 show_limits() {
   echo -e "${BLUE}Fetching rate limits...${NC}" >&2
   # Only inference endpoints on saia.gwdg.de return ratelimit headers
-  # We make a minimal, valid request to get them.
-  curl -s -i -X POST "https://saia.gwdg.de/v1/chat/completions" \
+  # SAIA does not document a zero-cost quota probe. This intentionally sends
+  # no inference payload, so the gateway returns an error plus limit headers.
+  curl -s -i "https://saia.gwdg.de/v1/chat/completions" \
     -H "Authorization: Bearer $SAIA_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"model\": \"$DEFAULT_CHAT_MODEL\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}], \"max_tokens\": 1}" | \
+    -H "Content-Type: application/json" | \
     grep -iE "x-ratelimit|ratelimit" | sed 's/\r//g'
 }
 
