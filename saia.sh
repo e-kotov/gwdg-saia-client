@@ -35,6 +35,14 @@ check_deps() {
 # API Key Check
 check_api_key() {
   if [ -z "${SAIA_API_KEY:-}" ]; then
+    # Try fetching from macOS Keychain if on macOS
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v security &> /dev/null; then
+      SAIA_API_KEY=$(security find-generic-password -w -s saia_api_key 2>/dev/null || true)
+      export SAIA_API_KEY
+    fi
+  fi
+
+  if [ -z "${SAIA_API_KEY:-}" ]; then
     echo -e "${RED}Error:${NC} SAIA_API_KEY is not set." >&2
     echo "Please set it in your environment or add it to a .env file as SAIA_API_KEY=your_key_here"
     exit 1
@@ -70,9 +78,10 @@ show_help() {
   echo "Usage: $0 <command> [arguments]"
   echo ""
   echo -e "${BLUE}Authentication:${NC}"
-  echo "  Provide your API key in one of two ways:"
-  echo "  1. Export it:  export SAIA_API_KEY='your_key'"
-  echo "  2. .env file:  echo \"SAIA_API_KEY=your_key\" > .env"
+  echo "  Provide your API key in one of three ways:"
+  echo "  1. Export it:        export SAIA_API_KEY='your_key'"
+  echo "  2. .env file:        echo \"SAIA_API_KEY=your_key\" > .env"
+  echo "  3. macOS Keychain:   automatically reads 'saia_api_key' if present"
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
   echo "  models            List all available AI models"

@@ -31,16 +31,17 @@ chmod +x ~/.local/bin/saia
 
 ## Authentication
 
-The script requires a SAIA API key. You can provide it in two ways:
+The script requires a SAIA API key. You can provide it in three ways:
 
 1. **Environment Variable**:
    ```bash
    export SAIA_API_KEY='your_key_here'
    ```
-2. **.env File**: Create a `.env` file in the repository root:
+2. **.env File**: Create a `.env` file in the working directory:
    ```bash
    SAIA_API_KEY=your_key_here
    ```
+3. **macOS Keychain**: If on macOS, `saia` automatically attempts to retrieve `saia_api_key` from your system keychain if `SAIA_API_KEY` is not set.
 
 ## Usage
 
