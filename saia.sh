@@ -126,6 +126,40 @@ list_models() {
   echo "$response" | jq -r '.data[].id' | sort
 }
 
+format_duration() {
+  local total_seconds="$1"
+  local days hours minutes seconds
+
+  days=$((total_seconds / 86400))
+  hours=$(((total_seconds % 86400) / 3600))
+  minutes=$(((total_seconds % 3600) / 60))
+  seconds=$((total_seconds % 60))
+
+  local parts=()
+  (( days > 0 )) && parts+=("${days}d")
+  (( hours > 0 )) && parts+=("${hours}h")
+  (( minutes > 0 )) && parts+=("${minutes}m")
+  (( seconds > 0 || ${#parts[@]} == 0 )) && parts+=("${seconds}s")
+
+  local IFS=' '
+  echo "${parts[*]}"
+}
+
+format_reset_time() {
+  local reset_seconds="$1"
+  [[ "$reset_seconds" =~ ^[0-9]+$ ]] || return 1
+
+  local target_epoch=$(( $(date +%s) + reset_seconds ))
+  local timestamp
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    timestamp=$(date -r "$target_epoch" '+%Y-%m-%d %H:%M:%S %Z')
+  else
+    timestamp=$(date -d "@$target_epoch" '+%Y-%m-%d %H:%M:%S %Z')
+  fi
+
+  printf '%s (at %s)' "$(format_duration "$reset_seconds")" "$timestamp"
+}
+
 show_limits() {
   local model="${1:-$DEFAULT_CHAT_MODEL}"
   echo -e "${BLUE}Fetching SAIA account rate limits...${NC}" >&2
@@ -172,11 +206,13 @@ show_limits() {
     [[ "$rem_mo" == "0" ]] && exhausted_windows+=("Month")
 
     if [ -n "$reset_sec" ]; then
+      local reset_description
+      reset_description=$(format_reset_time "$reset_sec" || true)
       if [ "${#exhausted_windows[@]}" -eq 1 ]; then
         reset_window="${exhausted_windows[0]}"
-        reset_suffix="  (resets in ${reset_sec}s)"
+        [ -n "$reset_description" ] && reset_suffix="  (resets in ${reset_description})"
       elif [ "${#exhausted_windows[@]}" -gt 1 ]; then
-        reset_note="next applicable reset in ${reset_sec}s"
+        [ -n "$reset_description" ] && reset_note="next applicable reset in ${reset_description}"
       fi
     fi
 
