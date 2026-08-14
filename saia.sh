@@ -159,15 +159,43 @@ show_limits() {
   reset_sec=$(get_header_val "ratelimit-reset")
 
   if [ -n "$lim_min" ]; then
-    local min_reset_str=""
-    [ -n "$reset_sec" ] && min_reset_str="  (resets in ${reset_sec}s)"
+    # SAIA supplies one generic `ratelimit-reset` header, not a separate reset
+    # time for every window.  Show it only beside the quota window that is
+    # actually exhausted.  Labelling it as a minute reset when the daily quota
+    # is exhausted is misleading.
+    local reset_window="" reset_suffix="" reset_note=""
+    local min_reset_suffix="" hr_reset_suffix="" day_reset_suffix="" mo_reset_suffix=""
+    local exhausted_windows=()
+    [[ "$rem_min" == "0" ]] && exhausted_windows+=("Minute")
+    [[ "$rem_hr" == "0" ]] && exhausted_windows+=("Hour")
+    [[ "$rem_day" == "0" ]] && exhausted_windows+=("Day")
+    [[ "$rem_mo" == "0" ]] && exhausted_windows+=("Month")
+
+    if [ -n "$reset_sec" ]; then
+      if [ "${#exhausted_windows[@]}" -eq 1 ]; then
+        reset_window="${exhausted_windows[0]}"
+        reset_suffix="  (resets in ${reset_sec}s)"
+      elif [ "${#exhausted_windows[@]}" -gt 1 ]; then
+        reset_note="next applicable reset in ${reset_sec}s"
+      fi
+    fi
+
+    case "$reset_window" in
+      Minute) min_reset_suffix="$reset_suffix" ;;
+      Hour) hr_reset_suffix="$reset_suffix" ;;
+      Day) day_reset_suffix="$reset_suffix" ;;
+      Month) mo_reset_suffix="$reset_suffix" ;;
+    esac
 
     echo ""
     echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
-    printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-?}" "${lim_min:-?}" "$min_reset_str"
-    printf "  %-8s %s / %-5s remaining\n" "Hour:" "${rem_hr:-?}" "${lim_hr:-?}"
-    printf "  %-8s %s / %-5s remaining\n" "Day:" "${rem_day:-?}" "${lim_day:-?}"
-    printf "  %-8s %s / %-5s remaining\n" "Month:" "${rem_mo:-?}" "${lim_mo:-?}"
+    printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-?}" "${lim_min:-?}" "$min_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Hour:" "${rem_hr:-?}" "${lim_hr:-?}" "$hr_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Day:" "${rem_day:-?}" "${lim_day:-?}" "$day_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Month:" "${rem_mo:-?}" "${lim_mo:-?}" "$mo_reset_suffix"
+    if [ -n "$reset_note" ]; then
+      echo "  Reset:   ${reset_note}"
+    fi
     echo ""
     echo -e "${RED}Note:${NC} Running this quota check consumed 1 request attempt from your API limit."
   else
