@@ -76,7 +76,8 @@ show_help() {
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
   echo "  models            List all available AI models"
-  echo "  limits            Show current API rate limits and remaining quota"
+  echo "  limits [model]    Show current API rate limits and remaining account quota"
+  echo "                    (optional [model] argument, defaults to $DEFAULT_CHAT_MODEL)"
   echo "  convert <file>    Convert a document (PDF/etc) to Markdown (Docling)"
   echo "  embed <text>      Get embeddings for the provided text"
   echo "  audio <task> <f>  Audio task (transcriptions|translations) for file <f>"
@@ -93,12 +94,12 @@ show_help() {
   echo "Examples:"
   echo "  $0 chat \"Hello there\""
   echo "  $0 chat \"You are a poet\" \"Write a poem about Bash\""
+  echo "  $0 limits"
   echo "  cat file.txt | $0 chat \"Summarize this\" -"
   echo ""
   echo "Limit note:"
-  echo "  $0 limits retrieves quota from response headers, but SAIA does"
-  echo "  not appear to provide a zero-cost quota probe. It sends no"
-  echo "  inference payload, but may still spend one request attempt."
+  echo "  $0 limits sends a minimal 1-token request payload so Kong returns"
+  echo "  your true inference account quota (consumes 1 request attempt)."
   echo ""
 }
 
@@ -117,14 +118,53 @@ list_models() {
 }
 
 show_limits() {
-  echo -e "${BLUE}Fetching rate limits...${NC}" >&2
-  # Only inference endpoints on saia.gwdg.de return ratelimit headers
-  # SAIA does not document a zero-cost quota probe. This intentionally sends
-  # no inference payload, so the gateway returns an error plus limit headers.
-  curl -s -i "https://saia.gwdg.de/v1/chat/completions" \
+  local model="${1:-$DEFAULT_CHAT_MODEL}"
+  echo -e "${BLUE}Fetching SAIA account rate limits...${NC}" >&2
+
+  local raw_resp header_block
+  raw_resp=$(curl -s -i --max-time 5 "$BASE_URL/chat/completions" \
     -H "Authorization: Bearer $SAIA_API_KEY" \
-    -H "Content-Type: application/json" | \
-    grep -iE "x-ratelimit|ratelimit" | sed 's/\r//g'
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg model "$model" '{model: $model, messages: [{"role":"user","content":"."}], max_tokens: 1}')" || true)
+
+  header_block=$(echo "$raw_resp" | sed -n '1,/^\r*$/p' | tr -d '\r')
+
+  get_header_val() {
+    local key="$1"
+    echo "$header_block" | grep -i "^${key}:" | head -n1 | cut -d':' -f2- | xargs
+  }
+
+  local rem_min lim_min rem_hr lim_hr rem_day lim_day rem_mo lim_mo reset_sec
+  lim_min=$(get_header_val "x-ratelimit-limit-minute")
+  rem_min=$(get_header_val "x-ratelimit-remaining-minute")
+
+  lim_hr=$(get_header_val "x-ratelimit-limit-hour")
+  rem_hr=$(get_header_val "x-ratelimit-remaining-hour")
+
+  lim_day=$(get_header_val "x-ratelimit-limit-day")
+  rem_day=$(get_header_val "x-ratelimit-remaining-day")
+
+  lim_mo=$(get_header_val "x-ratelimit-limit-month")
+  rem_mo=$(get_header_val "x-ratelimit-remaining-month")
+
+  reset_sec=$(get_header_val "ratelimit-reset")
+
+  if [ -n "$lim_min" ]; then
+    local min_reset_str=""
+    [ -n "$reset_sec" ] && min_reset_str="  (resets in ${reset_sec}s)"
+
+    echo ""
+    echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
+    printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-?}" "${lim_min:-?}" "$min_reset_str"
+    printf "  %-8s %s / %-5s remaining\n" "Hour:" "${rem_hr:-?}" "${lim_hr:-?}"
+    printf "  %-8s %s / %-5s remaining\n" "Day:" "${rem_day:-?}" "${lim_day:-?}"
+    printf "  %-8s %s / %-5s remaining\n" "Month:" "${rem_mo:-?}" "${lim_mo:-?}"
+    echo ""
+    echo -e "${RED}Note:${NC} Running this quota check consumed 1 request attempt from your API limit."
+  else
+    echo -e "${RED}Warning:${NC} Could not parse standard rate limit headers. Raw response headers:"
+    echo "$header_block" | grep -iE "x-ratelimit|ratelimit" || echo "$header_block"
+  fi
 }
 
 convert_doc() {
@@ -284,7 +324,7 @@ case "${1:-help}" in
     check_api_key && list_models
     ;;
   limits)
-    check_api_key && show_limits
+    check_api_key && show_limits "${2:-}"
     ;;
   convert)
     check_api_key

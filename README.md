@@ -61,10 +61,7 @@ Run the script without arguments to see the help menu:
 ./saia.sh limits
 ```
 
-**Known limitation:** SAIA exposes rate-limit usage through HTTP response headers, but
-the service does not appear to provide a zero-cost quota probe. Running
-`./saia.sh limits` sends a header-only API probe without an inference payload, so
-it may still spend one request attempt from your SAIA rate-limit quota.
+**Note on rate limits:** All SAIA models share a single user account quota pool (30 req/min, 200 req/hr, 1,000 req/day, 3,000 req/month). Running `./saia.sh limits` sends a minimal 1-token request payload so Kong returns your actual inference quota instead of an un-routed fallback default. *Note: Running this probe consumes 1 request attempt from your API quota.*
 
 **Convert a PDF to Markdown (via Docling):**
 ```bash
