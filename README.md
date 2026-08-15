@@ -62,7 +62,7 @@ Run the script without arguments to see the help menu:
 ./saia.sh limits
 ```
 
-**Note on rate limits:** All SAIA models share a single user account quota pool (30 req/min, 200 req/hr, 1,000 req/day, 3,000 req/month). Running `./saia.sh limits` sends a minimal 1-token request payload so Kong returns your actual inference quota instead of an un-routed fallback default. The API exposes one generic reset time: the CLI places it beside the single exhausted window, or labels it as the next applicable reset when several windows are exhausted. Reset times include both a compact duration and the local date, time, and timezone. *Note: Running this probe consumes 1 request attempt from your API quota.*
+**Note on rate limits:** All SAIA models share a single user account quota pool (30 req/min, 200 req/hr, 1,000 req/day, 3,000 req/month). Running `./saia.sh limits` sends a minimal 1-token request payload so Kong returns your actual inference quota instead of an un-routed fallback default. Reset times returned by the API headers are displayed alongside their corresponding quota window (e.g. minute rollover, or specific exhausted window). Reset times include both a compact duration and the local date, time, and timezone. *Note: Running this probe consumes 1 request attempt from your API quota.*
 
 **Convert a PDF to Markdown (via Docling):**
 ```bash

@@ -136,10 +136,10 @@ format_duration() {
   seconds=$((total_seconds % 60))
 
   local parts=()
-  (( days > 0 )) && parts+=("${days}d")
-  (( hours > 0 )) && parts+=("${hours}h")
-  (( minutes > 0 )) && parts+=("${minutes}m")
-  (( seconds > 0 || ${#parts[@]} == 0 )) && parts+=("${seconds}s")
+  if [ "$days" -gt 0 ]; then parts+=("${days}d"); fi
+  if [ "$hours" -gt 0 ]; then parts+=("${hours}h"); fi
+  if [ "$minutes" -gt 0 ]; then parts+=("${minutes}m"); fi
+  if [ "$seconds" -gt 0 ] || [ "${#parts[@]}" -eq 0 ]; then parts+=("${seconds}s"); fi
 
   local IFS=' '
   echo "${parts[*]}"
@@ -147,7 +147,9 @@ format_duration() {
 
 format_reset_time() {
   local reset_seconds="$1"
-  [[ "$reset_seconds" =~ ^[0-9]+$ ]] || return 1
+  if [[ ! "$reset_seconds" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
 
   local target_epoch=$(( $(date +%s) + reset_seconds ))
   local timestamp
@@ -174,7 +176,7 @@ show_limits() {
 
   get_header_val() {
     local key="$1"
-    echo "$header_block" | grep -i "^${key}:" | head -n1 | cut -d':' -f2- | xargs
+    echo "$header_block" | { grep -i "^${key}:" || true; } | head -n1 | cut -d':' -f2- | xargs
   }
 
   local rem_min lim_min rem_hr lim_hr rem_day lim_day rem_mo lim_mo reset_sec
@@ -191,37 +193,69 @@ show_limits() {
   rem_mo=$(get_header_val "x-ratelimit-remaining-month")
 
   reset_sec=$(get_header_val "ratelimit-reset")
+  if [ -z "$reset_sec" ]; then
+    reset_sec=$(get_header_val "x-ratelimit-reset")
+  fi
+
+  local reset_min_hdr reset_hr_hdr reset_day_hdr reset_mo_hdr
+  reset_min_hdr=$(get_header_val "x-ratelimit-reset-minute")
+  reset_hr_hdr=$(get_header_val "x-ratelimit-reset-hour")
+  reset_day_hdr=$(get_header_val "x-ratelimit-reset-day")
+  reset_mo_hdr=$(get_header_val "x-ratelimit-reset-month")
 
   if [ -n "$lim_min" ]; then
-    # SAIA supplies one generic `ratelimit-reset` header, not a separate reset
-    # time for every window.  Show it only beside the quota window that is
-    # actually exhausted.  Labelling it as a minute reset when the daily quota
-    # is exhausted is misleading.
     local reset_window="" reset_suffix="" reset_note=""
     local min_reset_suffix="" hr_reset_suffix="" day_reset_suffix="" mo_reset_suffix=""
     local exhausted_windows=()
-    [[ "$rem_min" == "0" ]] && exhausted_windows+=("Minute")
-    [[ "$rem_hr" == "0" ]] && exhausted_windows+=("Hour")
-    [[ "$rem_day" == "0" ]] && exhausted_windows+=("Day")
-    [[ "$rem_mo" == "0" ]] && exhausted_windows+=("Month")
+    if [[ "$rem_min" == "0" ]]; then exhausted_windows+=("Minute"); fi
+    if [[ "$rem_hr" == "0" ]]; then exhausted_windows+=("Hour"); fi
+    if [[ "$rem_day" == "0" ]]; then exhausted_windows+=("Day"); fi
+    if [[ "$rem_mo" == "0" ]]; then exhausted_windows+=("Month"); fi
 
-    if [ -n "$reset_sec" ]; then
+    # Check for per-window reset headers first
+    if [ -n "$reset_min_hdr" ]; then
+      local desc
+      desc=$(format_reset_time "$reset_min_hdr" || true)
+      if [ -n "$desc" ]; then min_reset_suffix="  (resets in ${desc})"; fi
+    fi
+    if [ -n "$reset_hr_hdr" ]; then
+      local desc
+      desc=$(format_reset_time "$reset_hr_hdr" || true)
+      if [ -n "$desc" ]; then hr_reset_suffix="  (resets in ${desc})"; fi
+    fi
+    if [ -n "$reset_day_hdr" ]; then
+      local desc
+      desc=$(format_reset_time "$reset_day_hdr" || true)
+      if [ -n "$desc" ]; then day_reset_suffix="  (resets in ${desc})"; fi
+    fi
+    if [ -n "$reset_mo_hdr" ]; then
+      local desc
+      desc=$(format_reset_time "$reset_mo_hdr" || true)
+      if [ -n "$desc" ]; then mo_reset_suffix="  (resets in ${desc})"; fi
+    fi
+
+    # Fall back to single generic reset header if per-window headers were not provided
+    if [ -n "$reset_sec" ] && [ -z "$min_reset_suffix" ] && [ -z "$hr_reset_suffix" ] && [ -z "$day_reset_suffix" ] && [ -z "$mo_reset_suffix" ]; then
       local reset_description
       reset_description=$(format_reset_time "$reset_sec" || true)
       if [ "${#exhausted_windows[@]}" -eq 1 ]; then
         reset_window="${exhausted_windows[0]}"
-        [ -n "$reset_description" ] && reset_suffix="  (resets in ${reset_description})"
+        if [ -n "$reset_description" ]; then reset_suffix="  (resets in ${reset_description})"; fi
       elif [ "${#exhausted_windows[@]}" -gt 1 ]; then
-        [ -n "$reset_description" ] && reset_note="next applicable reset in ${reset_description}"
+        if [ -n "$reset_description" ]; then reset_note="next applicable reset in ${reset_description}"; fi
+      else
+        # When no window is exhausted, Kong's generic ratelimit-reset corresponds to the active minute window
+        reset_window="Minute"
+        if [ -n "$reset_description" ]; then reset_suffix="  (resets in ${reset_description})"; fi
       fi
-    fi
 
-    case "$reset_window" in
-      Minute) min_reset_suffix="$reset_suffix" ;;
-      Hour) hr_reset_suffix="$reset_suffix" ;;
-      Day) day_reset_suffix="$reset_suffix" ;;
-      Month) mo_reset_suffix="$reset_suffix" ;;
-    esac
+      case "$reset_window" in
+        Minute) min_reset_suffix="$reset_suffix" ;;
+        Hour) hr_reset_suffix="$reset_suffix" ;;
+        Day) day_reset_suffix="$reset_suffix" ;;
+        Month) mo_reset_suffix="$reset_suffix" ;;
+      esac
+    fi
 
     echo ""
     echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
