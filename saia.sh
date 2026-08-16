@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Configuration
-BASE_URL="https://chat-ai.academiccloud.de/v1"
+DEFAULT_ENDPOINT="academiccloud"
 DEFAULT_CHAT_MODEL="meta-llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL="flux"
 
@@ -13,14 +13,129 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Load .env if it exists in the current directory
+# Built-in endpoints
+BUILTIN_ACADEMICCLOUD_URL="https://chat-ai.academiccloud.de/v1"
+BUILTIN_GWDG_URL="https://saia.gwdg.de/v1"
+
+# Capture inherited environment variables before loading .env
+INHERITED_SAIA_ENDPOINT="${SAIA_ENDPOINT:-}"
+INHERITED_BASE_URL="${BASE_URL:-}"
+DOTENV_SAIA_ENDPOINT=""
+DOTENV_BASE_URL=""
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# Load .env if it exists in the current directory without overwriting inherited environment variables
 if [ -f .env ]; then
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ ! "$line" =~ ^# ]] && [[ "$line" == *=* ]]; then
-      export "$line"
+    line="${line//$'\r'/}"
+    line="$(trim_whitespace "$line")"
+    if [[ -n "$line" && ! "$line" =~ ^# && "$line" == *=* ]]; then
+      key="${line%%=*}"
+      val="${line#*=}"
+      key="$(trim_whitespace "$key")"
+      val="$(trim_whitespace "$val")"
+      if [[ "$key" == export[[:space:]]* ]]; then
+        key="$(trim_whitespace "${key#export}")"
+      fi
+      if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo -e "${RED}Error:${NC} Invalid variable name in .env: '$key'" >&2
+        exit 1
+      fi
+      if [[ "$val" =~ ^\"(.*)\"$ ]]; then
+        val="${BASH_REMATCH[1]}"
+      elif [[ "$val" =~ ^\'(.*)\'$ ]]; then
+        val="${BASH_REMATCH[1]}"
+      fi
+      if [ "$key" = "SAIA_ENDPOINT" ] && [ -z "$INHERITED_SAIA_ENDPOINT" ] && [ -z "$DOTENV_SAIA_ENDPOINT" ]; then
+        DOTENV_SAIA_ENDPOINT="$val"
+      fi
+      if [ "$key" = "BASE_URL" ] && [ -z "$INHERITED_BASE_URL" ] && [ -z "$DOTENV_BASE_URL" ]; then
+        DOTENV_BASE_URL="$val"
+      fi
+      if [ -z "${!key+x}" ]; then
+        export "$key=$val"
+      fi
     fi
   done < .env
 fi
+
+# Endpoint Resolution State
+BASE_URL=""
+ENDPOINT_ID=""
+ENDPOINT_LABEL=""
+ENDPOINT_SOURCE=""
+
+resolve_endpoint() {
+  local raw_target=""
+
+  if [ -n "$CLI_ENDPOINT" ]; then
+    raw_target="$CLI_ENDPOINT"
+    ENDPOINT_SOURCE="cli"
+  elif [ -n "$INHERITED_SAIA_ENDPOINT" ]; then
+    raw_target="$INHERITED_SAIA_ENDPOINT"
+    ENDPOINT_SOURCE="environment"
+  elif [ -n "$DOTENV_SAIA_ENDPOINT" ]; then
+    raw_target="$DOTENV_SAIA_ENDPOINT"
+    ENDPOINT_SOURCE="dotenv"
+  elif [ -n "$INHERITED_BASE_URL" ]; then
+    raw_target="$INHERITED_BASE_URL"
+    ENDPOINT_SOURCE="legacy"
+  elif [ -n "$DOTENV_BASE_URL" ]; then
+    raw_target="$DOTENV_BASE_URL"
+    ENDPOINT_SOURCE="legacy"
+  else
+    raw_target="$DEFAULT_ENDPOINT"
+    ENDPOINT_SOURCE="default"
+  fi
+
+  raw_target="$(trim_whitespace "$raw_target")"
+
+  case "$raw_target" in
+    academiccloud)
+      ENDPOINT_ID="academiccloud"
+      BASE_URL="$BUILTIN_ACADEMICCLOUD_URL"
+      ;;
+    gwdg)
+      ENDPOINT_ID="gwdg"
+      BASE_URL="$BUILTIN_GWDG_URL"
+      ;;
+    http://*|https://*)
+      if [[ ! "$raw_target" =~ ^https?://[^[:space:]/]+(/[^[:space:]]*)?$ ]]; then
+        echo -e "${RED}Error:${NC} Invalid endpoint URL: '$raw_target'" >&2
+        echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+        exit 1
+      fi
+      ENDPOINT_ID="custom"
+      local normalized="$raw_target"
+      while [[ "$normalized" == */ ]]; do
+        normalized="${normalized%/}"
+      done
+      BASE_URL="$normalized"
+      ;;
+    *)
+      echo -e "${RED}Error:${NC} Unknown endpoint '$raw_target'." >&2
+      echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+      exit 1
+      ;;
+  esac
+
+  local source_desc=""
+  case "$ENDPOINT_SOURCE" in
+    cli) source_desc="selected by CLI option" ;;
+    environment) source_desc="selected by SAIA_ENDPOINT environment variable" ;;
+    dotenv) source_desc="selected by .env file" ;;
+    legacy) source_desc="selected by legacy BASE_URL" ;;
+    default) source_desc="default" ;;
+  esac
+
+  ENDPOINT_LABEL="${ENDPOINT_ID} (${BASE_URL}; ${source_desc})"
+}
 
 # Dependency Check
 check_deps() {
@@ -44,7 +159,7 @@ check_api_key() {
 
   if [ -z "${SAIA_API_KEY:-}" ]; then
     echo -e "${RED}Error:${NC} SAIA_API_KEY is not set." >&2
-    echo "Please set it in your environment or add it to a .env file as SAIA_API_KEY=your_key_here"
+    echo "Please set it in your environment or add it to a .env file as SAIA_API_KEY=your_key_here" >&2
     exit 1
   fi
 }
@@ -53,12 +168,12 @@ check_api_key() {
 handle_api_response() {
   local response="$1"
   if [ -z "$response" ]; then
-    echo -e "${RED}Error:${NC} Empty response from API." >&2
+    echo -e "${RED}Error:${NC} Empty response from API (${BASE_URL})." >&2
     exit 1
   fi
   if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
-    echo -e "${RED}API Error:${NC}"
-    echo "$response" | jq -r '.error.message // .error'
+    echo -e "${RED}API Error (${BASE_URL}):${NC}" >&2
+    echo "$response" | jq -r '.error.message // .error' >&2
     exit 1
   fi
 }
@@ -73,15 +188,28 @@ decode_base64() {
 }
 
 show_help() {
+  local script_name
+  script_name="$(basename "$0")"
+
   echo -e "${BLUE}SAIA CLI - Simple API Utility${NC}"
   echo ""
-  echo "Usage: $0 <command> [arguments]"
+  echo "Usage: $script_name [-e|--endpoint <name-or-url>] <command> [arguments]"
+  echo ""
+  echo -e "${BLUE}Options:${NC}"
+  echo "  -e, --endpoint <name-or-url>  Select a built-in endpoint or API base URL"
+  echo "                                (built-in: academiccloud [default], gwdg;"
+  echo "                                 or custom: https://...)"
   echo ""
   echo -e "${BLUE}Authentication:${NC}"
   echo "  Provide your API key in one of three ways:"
   echo "  1. Export it:        export SAIA_API_KEY='your_key'"
   echo "  2. .env file:        echo \"SAIA_API_KEY=your_key\" > .env"
   echo "  3. macOS Keychain:   automatically reads 'saia_api_key' if present"
+  echo ""
+  echo -e "${BLUE}Configuration:${NC}"
+  echo "  Set a persistent endpoint via SAIA_ENDPOINT in your environment or .env:"
+  echo "    export SAIA_ENDPOINT=gwdg"
+  echo "    export SAIA_ENDPOINT=https://custom-gateway.example.edu/v1"
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
   echo "  models            List all available AI models"
@@ -101,13 +229,15 @@ show_help() {
   echo "  help              Show this help message"
   echo ""
   echo "Examples:"
-  echo "  $0 chat \"Hello there\""
-  echo "  $0 chat \"You are a poet\" \"Write a poem about Bash\""
-  echo "  $0 limits"
-  echo "  cat file.txt | $0 chat \"Summarize this\" -"
+  echo "  $script_name chat \"Hello there\""
+  echo "  $script_name -e gwdg models"
+  echo "  $script_name -e https://gateway.example.edu/v1 chat \"Summarize this\""
+  echo "  $script_name chat \"You are a poet\" \"Write a poem about Bash\""
+  echo "  $script_name limits"
+  echo "  cat file.txt | $script_name chat \"Summarize this\" -"
   echo ""
   echo "Limit note:"
-  echo "  $0 limits sends a minimal 1-token request payload so Kong returns"
+  echo "  $script_name limits sends a minimal 1-token request payload so Kong returns"
   echo "  your true inference account quota (consumes 1 request attempt)."
   echo ""
 }
@@ -165,6 +295,7 @@ format_reset_time() {
 show_limits() {
   local model="${1:-$DEFAULT_CHAT_MODEL}"
   echo -e "${BLUE}Fetching SAIA account rate limits...${NC}" >&2
+  echo -e "Endpoint: ${ENDPOINT_LABEL}" >&2
 
   local raw_resp header_block
   raw_resp=$(curl -s -i --max-time 5 "$BASE_URL/chat/completions" \
@@ -203,7 +334,7 @@ show_limits() {
   reset_day_hdr=$(get_header_val "x-ratelimit-reset-day")
   reset_mo_hdr=$(get_header_val "x-ratelimit-reset-month")
 
-  if [ -n "$lim_min" ]; then
+  if [ -n "$lim_min" ] || [ -n "$lim_hr" ] || [ -n "$lim_day" ] || [ -n "$lim_mo" ]; then
     local reset_window="" reset_suffix="" reset_note=""
     local min_reset_suffix="" hr_reset_suffix="" day_reset_suffix="" mo_reset_suffix=""
     local exhausted_windows=()
@@ -259,24 +390,35 @@ show_limits() {
 
     echo ""
     echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
-    printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-?}" "${lim_min:-?}" "$min_reset_suffix"
-    printf "  %-8s %s / %-5s remaining%s\n" "Hour:" "${rem_hr:-?}" "${lim_hr:-?}" "$hr_reset_suffix"
-    printf "  %-8s %s / %-5s remaining%s\n" "Day:" "${rem_day:-?}" "${lim_day:-?}" "$day_reset_suffix"
-    printf "  %-8s %s / %-5s remaining%s\n" "Month:" "${rem_mo:-?}" "${lim_mo:-?}" "$mo_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-N/A}" "${lim_min:-N/A}" "$min_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Hour:" "${rem_hr:-N/A}" "${lim_hr:-N/A}" "$hr_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Day:" "${rem_day:-N/A}" "${lim_day:-N/A}" "$day_reset_suffix"
+    printf "  %-8s %s / %-5s remaining%s\n" "Month:" "${rem_mo:-N/A}" "${lim_mo:-N/A}" "$mo_reset_suffix"
     if [ -n "$reset_note" ]; then
       echo "  Reset:   ${reset_note}"
     fi
     echo ""
     echo -e "${RED}Note:${NC} Running this quota check consumed 1 request attempt from your API limit."
   else
-    echo -e "${RED}Warning:${NC} Could not parse standard rate limit headers. Raw response headers:"
-    echo "$header_block" | grep -iE "x-ratelimit|ratelimit" || echo "$header_block"
+    echo ""
+    echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
+    echo "  Rate limit headers are not available for this endpoint (${ENDPOINT_ID}: ${BASE_URL})."
+    echo "  This does not mean no limits exist on the server."
+    local rl_headers
+    rl_headers=$(echo "$header_block" | grep -iE "x-ratelimit|ratelimit" || true)
+    if [ -n "$rl_headers" ]; then
+      echo ""
+      echo "  Available ratelimit headers:"
+      echo "$rl_headers" | sed 's/^/    /'
+    fi
+    echo ""
+    echo -e "${RED}Note:${NC} Running this quota check consumed 1 request attempt from your API limit."
   fi
 }
 
 convert_doc() {
   local file="$1"
-  [ -f "$file" ] || { echo -e "${RED}Error:${NC} File not found: $file"; exit 1; }
+  [ -f "$file" ] || { echo -e "${RED}Error:${NC} File not found: $file" >&2; exit 1; }
 
   echo -e "${BLUE}Converting document: $file...${NC}" >&2
   local response
@@ -310,10 +452,10 @@ handle_audio() {
   local model="${3:-whisper-large-v2}"
   local format="${4:-text}"
 
-  [ -f "$file" ] || { echo -e "${RED}Error:${NC} File not found: $file"; exit 1; }
+  [ -f "$file" ] || { echo -e "${RED}Error:${NC} File not found: $file" >&2; exit 1; }
 
   echo -e "${BLUE}Performing audio $task for $file...${NC}" >&2
-  local audio_url="https://saia.gwdg.de/v1/audio/$task"
+  local audio_url="$BASE_URL/audio/$task"
   
   curl -s -X POST "$audio_url" \
     -H "Authorization: Bearer $SAIA_API_KEY" \
@@ -383,7 +525,7 @@ edit_image() {
   local file="$2"
   local output_file="edited_image.png"
 
-  [ -f "$file" ] || { echo -e "${RED}Error:${NC} Image file not found: $file"; exit 1; }
+  [ -f "$file" ] || { echo -e "${RED}Error:${NC} Image file not found: $file" >&2; exit 1; }
 
   echo -e "${BLUE}Editing image $file...${NC}" >&2
   curl -s -X POST "$BASE_URL/images/edits/" \
@@ -422,9 +564,71 @@ chat_arcana() {
   echo "$response" | jq -r '.choices[0].message.content'
 }
 
-# --- Main ---
+# --- Main & Dispatcher ---
 
 check_deps
+
+CLI_ENDPOINT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -e)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo -e "${RED}Error:${NC} Option '-e' requires a value." >&2
+        echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+        exit 1
+      fi
+      CLI_ENDPOINT="$2"
+      shift 2
+      ;;
+    -e=*)
+      CLI_ENDPOINT="${1#-e=}"
+      if [ -z "$CLI_ENDPOINT" ]; then
+        echo -e "${RED}Error:${NC} Option '-e' requires a value." >&2
+        echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+        exit 1
+      fi
+      shift 1
+      ;;
+    --endpoint)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo -e "${RED}Error:${NC} Option '--endpoint' requires a value." >&2
+        echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+        exit 1
+      fi
+      CLI_ENDPOINT="$2"
+      shift 2
+      ;;
+    --endpoint=*)
+      CLI_ENDPOINT="${1#--endpoint=}"
+      if [ -z "$CLI_ENDPOINT" ]; then
+        echo -e "${RED}Error:${NC} Option '--endpoint' requires a value." >&2
+        echo "Accepted endpoints are 'academiccloud', 'gwdg', or an absolute HTTP(S) URL (e.g. 'https://...')." >&2
+        exit 1
+      fi
+      shift 1
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -h|--help|help)
+      show_help
+      exit 0
+      ;;
+    -*)
+      echo -e "${RED}Error:${NC} Unknown option: $1" >&2
+      show_help >&2
+      exit 1
+      ;;
+    *)
+      # First non-option argument is the command
+      break
+      ;;
+  esac
+done
+
+resolve_endpoint
 
 case "${1:-help}" in
   models)
@@ -435,24 +639,24 @@ case "${1:-help}" in
     ;;
   convert)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing file path"; exit 1; }
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing file path" >&2; exit 1; }
     convert_doc "$2"
     ;;
   embed)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing text"; exit 1; }
-    get_embeddings "$2"
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing text" >&2; exit 1; }
+    get_embeddings "$2" "${3:-}"
     ;;
   audio)
     check_api_key
-    [[ "${2:-}" != "transcriptions" && "${2:-}" != "translations" ]] && { echo -e "${RED}Error:${NC} Task must be 'transcriptions' or 'translations'"; exit 1; }
-    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing file path"; exit 1; }
+    [[ "${2:-}" != "transcriptions" && "${2:-}" != "translations" ]] && { echo -e "${RED}Error:${NC} Task must be 'transcriptions' or 'translations'" >&2; exit 1; }
+    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing file path" >&2; exit 1; }
     handle_audio "$2" "$3" "${4:-}" "${5:-}"
     ;;
   chat)
     check_api_key
     if [ -z "${2:-}" ]; then
-      echo -e "${RED}Error:${NC} Missing prompt"; exit 1
+      echo -e "${RED}Error:${NC} Missing prompt" >&2; exit 1
     fi
     if [ -z "${3:-}" ]; then
       # One arg: treated as user prompt with default system prompt
@@ -464,32 +668,32 @@ case "${1:-help}" in
     ;;
   complete)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt (use '-' for stdin)"; exit 1; }
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt (use '-' for stdin)" >&2; exit 1; }
     text_completion "$2" "${3:-}"
     ;;
   image)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt"; exit 1; }
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt" >&2; exit 1; }
     generate_image "$2" "${3:-}"
     ;;
   edit_image)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt"; exit 1; }
-    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing image file path"; exit 1; }
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing prompt" >&2; exit 1; }
+    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing image file path" >&2; exit 1; }
     edit_image "$2" "$3"
     ;;
   arcana)
     check_api_key
-    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing arcana ID"; exit 1; }
-    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing user prompt (use '-' for stdin)"; exit 1; }
+    [ -z "${2:-}" ] && { echo -e "${RED}Error:${NC} Missing arcana ID" >&2; exit 1; }
+    [ -z "${3:-}" ] && { echo -e "${RED}Error:${NC} Missing user prompt (use '-' for stdin)" >&2; exit 1; }
     chat_arcana "$2" "$3"
     ;;
-  help|--help|-h)
+  help)
     show_help
     ;;
   *)
     echo -e "${RED}Error:${NC} Unknown command: $1" >&2
-    show_help
+    show_help >&2
     exit 1
     ;;
 esac

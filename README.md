@@ -6,6 +6,7 @@ This client provides a minimalistic way to interact with all SAIA service and in
 
 ## Features
 
+- **Multi-Endpoint Support**: Effortlessly switch between Academic Cloud (default), GWDG SAIA, or any compatible custom gateway/proxy.
 - **Full API Coverage**: Support for models, rate limits, Docling document conversion, embeddings, and audio processing.
 - **Inference Support**: Single-shot chat completions, text generation, and image generation/editing.
 - **RAG Ready**: Direct support for querying Arcanas.
@@ -43,6 +44,29 @@ The script requires a SAIA API key. You can provide it in three ways:
    ```
 3. **macOS Keychain**: If on macOS, `saia` automatically attempts to retrieve `saia_api_key` from your system keychain if `SAIA_API_KEY` is not set.
 
+## Endpoint Selection
+
+The CLI provides a single `-e` / `--endpoint` selector that accepts either a built-in endpoint name or an absolute HTTP(S) API root URL:
+
+| Endpoint | Base URL | Default |
+| --- | --- | --- |
+| `academiccloud` | `https://chat-ai.academiccloud.de/v1` | Yes |
+| `gwdg` | `https://saia.gwdg.de/v1` | No |
+| Custom URL | `http://...` or `https://...` | No |
+
+For a custom endpoint, provide its exact API root, including a version path when
+that service requires one, for example `https://gateway.example.edu/v1`. The CLI
+never guesses or appends `/v1`.
+
+### Precedence
+
+The active endpoint is selected in this order:
+1. Leading `-e` / `--endpoint` option (`saia -e gwdg models`)
+2. Inherited `SAIA_ENDPOINT` environment variable (`export SAIA_ENDPOINT=gwdg`)
+3. `SAIA_ENDPOINT` in the project `.env` file (`SAIA_ENDPOINT=gwdg`)
+4. Explicit legacy `BASE_URL` fallback
+5. Built-in default (`academiccloud`)
+
 ## Usage
 
 Run the script without arguments to see the help menu:
@@ -55,14 +79,21 @@ Run the script without arguments to see the help menu:
 **List available models:**
 ```bash
 ./saia.sh models
+
+# Query GWDG endpoint
+./saia.sh -e gwdg models
+
+# Query custom gateway
+./saia.sh -e https://gateway.example.edu/v1 models
 ```
 
 **Check your remaining quota:**
 ```bash
 ./saia.sh limits
+./saia.sh -e gwdg limits
 ```
 
-**Note on rate limits:** All SAIA models share a single user account quota pool (30 req/min, 200 req/hr, 1,000 req/day, 3,000 req/month). Running `./saia.sh limits` sends a minimal 1-token request payload so Kong returns your actual inference quota instead of an un-routed fallback default. Reset times returned by the API headers are displayed alongside their corresponding quota window (e.g. minute rollover, or specific exhausted window). Reset times include both a compact duration and the local date, time, and timezone. *Note: Running this probe consumes 1 request attempt from your API quota.*
+**Note on rate limits:** Running `./saia.sh limits` sends a minimal 1-token request payload so Kong returns your actual inference quota instead of an un-routed fallback default. Reset times returned by the API headers are displayed alongside their corresponding quota window (e.g. minute rollover, or specific exhausted window). Reset times include both a compact duration and the local date, time, and timezone. *Note: Running this probe consumes 1 request attempt from your API quota.*
 
 **Convert a PDF to Markdown (via Docling):**
 ```bash
@@ -72,6 +103,9 @@ Run the script without arguments to see the help menu:
 **Chat with an LLM (Simple):**
 ```bash
 ./saia.sh chat "How do I refactor this Bash script?"
+
+# Chat using GWDG endpoint
+./saia.sh -e gwdg chat "How do I refactor this Bash script?"
 ```
 
 **Chat with an LLM (Custom system prompt + stdin):**
