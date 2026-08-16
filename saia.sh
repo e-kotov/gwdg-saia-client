@@ -569,6 +569,7 @@ chat_arcana() {
 check_deps
 
 CLI_ENDPOINT=""
+REMAINING_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -609,24 +610,39 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --)
-      shift
+      shift 1
+      while [[ $# -gt 0 ]]; do
+        REMAINING_ARGS+=("$1")
+        shift 1
+      done
       break
       ;;
-    -h|--help|help)
+    -h|--help)
       show_help
       exit 0
       ;;
     -*)
-      echo -e "${RED}Error:${NC} Unknown option: $1" >&2
-      show_help >&2
-      exit 1
+      if [ "$1" = "-" ]; then
+        REMAINING_ARGS+=("$1")
+        shift 1
+      else
+        echo -e "${RED}Error:${NC} Unknown option: $1" >&2
+        show_help >&2
+        exit 1
+      fi
       ;;
     *)
-      # First non-option argument is the command
-      break
+      REMAINING_ARGS+=("$1")
+      shift 1
       ;;
   esac
 done
+
+if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+  set -- "${REMAINING_ARGS[@]}"
+else
+  set --
+fi
 
 resolve_endpoint
 

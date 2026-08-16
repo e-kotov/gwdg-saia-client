@@ -61,7 +61,7 @@ never guesses or appends `/v1`.
 ### Precedence
 
 The active endpoint is selected in this order:
-1. Leading `-e` / `--endpoint` option (`saia -e gwdg models`)
+1. `-e` / `--endpoint` CLI option (`saia -e gwdg models` or `saia limits -e gwdg`)
 2. Inherited `SAIA_ENDPOINT` environment variable (`export SAIA_ENDPOINT=gwdg`)
 3. `SAIA_ENDPOINT` in the project `.env` file (`SAIA_ENDPOINT=gwdg`)
 4. Explicit legacy `BASE_URL` fallback

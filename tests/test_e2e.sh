@@ -416,12 +416,29 @@ OUT=$("$SAIA_BIN" "-e=gwdg" models)
 LAST_CURL=$(tail -n 1 "$CURL_LOG")
 assert_contains "https://saia.gwdg.de/v1/models" "$LAST_CURL" "-e=val flag syntax works"
 
-# Test 2.12: Option before command only (options after command treated as args)
+# Test 2.12: Option placed after subcommand (e.g. saia limits -e gwdg)
 rm -f "$CURL_LOG"
-CHAT_AFTER=$("$SAIA_BIN" chat "--endpoint" "gwdg")
+OUT=$("$SAIA_BIN" limits -e gwdg)
 LAST_CURL=$(tail -n 1 "$CURL_LOG")
-assert_contains "https://chat-ai.academiccloud.de/v1/chat/completions" "$LAST_CURL" "Option after command treated as command args; default endpoint used"
-assert_contains "Chat response from mock server" "$CHAT_AFTER" "Chat command executed"
+assert_contains "https://saia.gwdg.de/v1/chat/completions" "$LAST_CURL" "Option placed after subcommand (saia limits -e gwdg) works"
+
+# Test 2.13: Option placed after subcommand for models (e.g. saia models --endpoint gwdg)
+rm -f "$CURL_LOG"
+OUT=$("$SAIA_BIN" models --endpoint gwdg)
+LAST_CURL=$(tail -n 1 "$CURL_LOG")
+assert_contains "https://saia.gwdg.de/v1/models" "$LAST_CURL" "Option placed after subcommand (saia models --endpoint gwdg) works"
+
+# Test 2.14: Option placed between subcommand and arguments (e.g. saia chat -e gwdg "Hello")
+rm -f "$CURL_LOG"
+OUT=$("$SAIA_BIN" chat -e gwdg "Hello from user")
+LAST_CURL=$(tail -n 1 "$CURL_LOG")
+assert_contains "https://saia.gwdg.de/v1/chat/completions" "$LAST_CURL" "Option between subcommand and arg (saia chat -e gwdg 'Hello') works"
+
+# Test 2.15: Option placed between multi-arguments (e.g. saia chat "System prompt" -e gwdg "User prompt")
+rm -f "$CURL_LOG"
+OUT=$("$SAIA_BIN" chat "System prompt" -e gwdg "User prompt")
+LAST_CURL=$(tail -n 1 "$CURL_LOG")
+assert_contains "https://saia.gwdg.de/v1/chat/completions" "$LAST_CURL" "Option between multi args (saia chat 'sys' -e gwdg 'user') works"
 
 # ==============================================================================
 # GROUP 3: URL Derivation for All Commands (Acceptance Criterion 8)
