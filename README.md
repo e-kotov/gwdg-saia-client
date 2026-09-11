@@ -8,6 +8,7 @@ This client provides a minimalistic way to interact with all SAIA service and in
 
 - **Multi-Endpoint Support**: Effortlessly switch between Academic Cloud (default), GWDG SAIA, or any compatible custom gateway/proxy.
 - **Full API Coverage**: Support for models, rate limits, Docling document conversion, embeddings, and audio processing.
+- **Rich Model Metadata**: `models --long` shows SAIA's own per-model `demand` (deployment load), serving `status`, and accepted input modalities; `models --json` emits the raw entries. Plain `models` still prints ids only, so existing pipelines are unaffected.
 - **Inference Support**: Single-shot chat completions, text generation, and image generation/editing.
 - **RAG Ready**: Direct support for querying Arcanas.
 - **Pipeline Friendly**: Supports reading prompts from `stdin`.

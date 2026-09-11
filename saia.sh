@@ -212,7 +212,8 @@ show_help() {
   echo "    export SAIA_ENDPOINT=https://custom-gateway.example.edu/v1"
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
-  echo "  models            List all available AI models"
+  echo "  models [-l|--json] List all available AI models (-l adds demand, status,"
+  echo "                    accepted input modalities; --json emits the raw entries)"
   echo "  limits [model]    Show current API rate limits and remaining account quota"
   echo "                    (optional [model] argument, defaults to $DEFAULT_CHAT_MODEL)"
   echo "  convert <file>    Convert a document (PDF/etc) to Markdown (Docling)"
@@ -230,7 +231,7 @@ show_help() {
   echo ""
   echo "Examples:"
   echo "  $script_name chat \"Hello there\""
-  echo "  $script_name -e gwdg models"
+  echo "  $script_name -e gwdg models --long"
   echo "  $script_name -e https://gateway.example.edu/v1 chat \"Summarize this\""
   echo "  $script_name chat \"You are a poet\" \"Write a poem about Bash\""
   echo "  $script_name limits"
@@ -251,9 +252,37 @@ list_models() {
     -H "Authorization: Bearer $SAIA_API_KEY" \
     -H "Accept: application/json" \
     -H "Content-Type: application/json")
-  
+
   handle_api_response "$response"
-  echo "$response" | jq -r '.data[].id' | sort
+
+  # Plain ids stay the default: this output is read by pipelines.
+  if [ "$LIST_JSON" = "1" ]; then
+    echo "$response" | jq '.data | sort_by(.id)'
+    return
+  fi
+
+  if [ "$LIST_DETAILS" != "1" ]; then
+    echo "$response" | jq -r '.data[].id' | sort
+    return
+  fi
+
+  # SAIA returns more than the OpenAI schema does: `demand` is its own load
+  # figure for the deployment behind a model (unit undocumented, comparable
+  # between models at one moment), `status` says whether it is serving at all,
+  # and `input` lists the modalities it accepts. A gateway or proxy that only
+  # implements the standard schema will omit them, so every field degrades to
+  # "-" rather than breaking the table.
+  echo "$response" | jq -r '
+    ( ([.data[].id | length] | max // 5) ) as $w
+    | ( "MODEL" + (" " * ($w - 5)) + "  DEMAND  STATUS      INPUT" ),
+      ( .data
+        | sort_by( -(.demand // -1), .id )
+        | .[]
+        | ( .id + (" " * ($w - (.id | length))) )
+          + "  " + ( ((.demand // "-") | tostring) | . + (" " * (6 - length)) )
+          + "  " + ( ((.status // "-") | tostring) | .[0:10] | . + (" " * (10 - length)) )
+          + "  " + ( (.input // []) | join(",") )
+      )'
 }
 
 format_duration() {
@@ -569,6 +598,8 @@ chat_arcana() {
 check_deps
 
 CLI_ENDPOINT=""
+LIST_DETAILS=0
+LIST_JSON=0
 REMAINING_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -616,6 +647,14 @@ while [[ $# -gt 0 ]]; do
         shift 1
       done
       break
+      ;;
+    -l|--long|--details)
+      LIST_DETAILS=1
+      shift 1
+      ;;
+    --json)
+      LIST_JSON=1
+      shift 1
       ;;
     -h|--help)
       show_help
