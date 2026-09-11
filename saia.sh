@@ -212,8 +212,8 @@ show_help() {
   echo "    export SAIA_ENDPOINT=https://custom-gateway.example.edu/v1"
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
-  echo "  models [-l|--json] List all available AI models (-l adds demand, status,"
-  echo "                    accepted input modalities; --json emits the raw entries)"
+  echo "  models            List models with demand, status and input modalities"
+  echo "                    (-s/--short for ids only, --json for the raw entries)"
   echo "  limits [model]    Show current API rate limits and remaining account quota"
   echo "                    (optional [model] argument, defaults to $DEFAULT_CHAT_MODEL)"
   echo "  convert <file>    Convert a document (PDF/etc) to Markdown (Docling)"
@@ -231,7 +231,7 @@ show_help() {
   echo ""
   echo "Examples:"
   echo "  $script_name chat \"Hello there\""
-  echo "  $script_name -e gwdg models --long"
+  echo "  $script_name -e gwdg models"
   echo "  $script_name -e https://gateway.example.edu/v1 chat \"Summarize this\""
   echo "  $script_name chat \"You are a poet\" \"Write a poem about Bash\""
   echo "  $script_name limits"
@@ -255,13 +255,14 @@ list_models() {
 
   handle_api_response "$response"
 
-  # Plain ids stay the default: this output is read by pipelines.
   if [ "$LIST_JSON" = "1" ]; then
     echo "$response" | jq '.data | sort_by(.id)'
     return
   fi
 
-  if [ "$LIST_DETAILS" != "1" ]; then
+  # The table is the default: the metadata is the reason to run this command
+  # interactively. `--short` is the pipeline form.
+  if [ "$LIST_SHORT" = "1" ]; then
     echo "$response" | jq -r '.data[].id' | sort
     return
   fi
@@ -598,7 +599,7 @@ chat_arcana() {
 check_deps
 
 CLI_ENDPOINT=""
-LIST_DETAILS=0
+LIST_SHORT=0
 LIST_JSON=0
 REMAINING_ARGS=()
 
@@ -648,8 +649,8 @@ while [[ $# -gt 0 ]]; do
       done
       break
       ;;
-    -l|--long|--details)
-      LIST_DETAILS=1
+    -s|--short|--ids)
+      LIST_SHORT=1
       shift 1
       ;;
     --json)
