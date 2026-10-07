@@ -8,6 +8,11 @@ so everything below sits under Unreleased until the first release is cut.
 
 ## [Unreleased]
 
+### Fixed
+
+- The human-readable `models --probe` table now runs its jq projection in null-input mode, so the
+  catalogue and probe JSON passed as arguments render even when standard input is empty.
+
 ### Added
 
 - `models --probe` sends one small chat-completion request per listed model and reports the

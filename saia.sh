@@ -328,7 +328,7 @@ list_models() {
     while IFS=$'\t' read -r model_id demand service input upstream runtime latency probe_status; do
       printf "%-32.32s %6.6s %-10.10s %-18.18s %-32.32s %-32.32s %10.10s %s\n" \
         "$model_id" "$demand" "$service" "$input" "$upstream" "$runtime" "$latency" "$probe_status"
-    done < <(jq -r --argjson models "$response" --argjson probes "$probe_results" '
+    done < <(jq -nr --argjson models "$response" --argjson probes "$probe_results" '
       [$models.data[] as $m | ($probes[] | select(.id == $m.id)) as $p | $m + {probe:$p}]
       | sort_by(-(.demand // -1), .id)
       | .[] | [
@@ -340,7 +340,7 @@ list_models() {
           ((.probe.runtime // "-") | if length > 32 then .[0:29] + "..." else . end),
           (.probe.latency // "-"),
           (.probe.status // "not probed")
-        ] | @tsv)')
+        ] | @tsv')
     if [ "$stopped" = "1" ]; then
       echo -e "${RED}Probe stopped early; remaining models were not requested.${NC}" >&2
     fi
