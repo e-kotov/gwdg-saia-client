@@ -8,7 +8,7 @@ This client provides a minimalistic way to interact with all SAIA service and in
 
 - **Multi-Endpoint Support**: Effortlessly switch between Academic Cloud (default), GWDG SAIA, or any compatible custom gateway/proxy.
 - **Full API Coverage**: Support for models, rate limits, Docling document conversion, embeddings, and audio processing.
-- **Rich Model Metadata**: `models` shows SAIA's own per-model `demand` (deployment load), serving `status`, and accepted input modalities, sorted by demand. Use `models --short` for a plain id list (pipelines) or `models --json` for the raw entries. **Breaking change:** `models` previously printed ids only.
+- **Rich Model Metadata**: `models` shows SAIA's per-model `demand` (deployment load), serving `status`, and accepted input modalities. Use `models --probe` to send a small inference request to each model and add its returned model name, runtime fingerprint, latency, and probe status; `models --probe <model>` limits this to one model. Probes are serial, spaced seven seconds apart, and stop when rate-limit headers show an exhausted window or the endpoint returns 429. Each probe consumes one inference request. Use `models --short` for plain ids or `models --json` for raw entries.
 - **Inference Support**: Single-shot chat completions, text generation, and image generation/editing.
 - **RAG Ready**: Direct support for querying Arcanas.
 - **Pipeline Friendly**: Supports reading prompts from `stdin`.
@@ -80,6 +80,12 @@ Run the script without arguments to see the help menu:
 **List available models:**
 ```bash
 ./saia.sh models
+
+# Probe all models (one inference request per model; paced to respect rate limits)
+./saia.sh models --probe
+
+# Probe just one model
+./saia.sh models --probe qwen3.8-27b
 
 # Query GWDG endpoint
 ./saia.sh -e gwdg models

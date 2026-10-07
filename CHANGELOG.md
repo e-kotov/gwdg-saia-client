@@ -10,6 +10,11 @@ so everything below sits under Unreleased until the first release is cut.
 
 ### Added
 
+- `models --probe` sends one small chat-completion request per listed model and reports the
+  returned model, runtime fingerprint, latency, and probe status alongside SAIA's catalogue
+  metadata. `models --probe <model>` probes only the named model. Probes run serially with seven
+  seconds between requests and stop when a 429 or exhausted rate-limit window is reported; each
+  completion still consumes one inference request.
 - `models` now reports the metadata SAIA returns beyond the OpenAI model schema: the per-model
   `demand` figure for the deployment behind a model, its serving `status`, and the input modalities
   it accepts. Sorted by demand, so the contended deployments are at the top.

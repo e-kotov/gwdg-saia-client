@@ -212,8 +212,8 @@ show_help() {
   echo "    export SAIA_ENDPOINT=https://custom-gateway.example.edu/v1"
   echo ""
   echo -e "${BLUE}Service & Utility Commands:${NC}"
-  echo "  models            List models with demand, status and input modalities"
-  echo "                    (-s/--short for ids only, --json for the raw entries)"
+  echo "  models [--probe [model]] List SAIA metadata; probe one or all with inference"
+  echo "                    (-s/--short for ids only, --json for raw/probe data)"
   echo "  limits [model]    Show current API rate limits and remaining account quota"
   echo "                    (optional [model] argument, defaults to $DEFAULT_CHAT_MODEL)"
   echo "  convert <file>    Convert a document (PDF/etc) to Markdown (Docling)"
@@ -232,6 +232,7 @@ show_help() {
   echo "Examples:"
   echo "  $script_name chat \"Hello there\""
   echo "  $script_name -e gwdg models"
+  echo "  $script_name models --probe qwen3.8-27b"
   echo "  $script_name -e https://gateway.example.edu/v1 chat \"Summarize this\""
   echo "  $script_name chat \"You are a poet\" \"Write a poem about Bash\""
   echo "  $script_name limits"
@@ -254,6 +255,97 @@ list_models() {
     -H "Content-Type: application/json")
 
   handle_api_response "$response"
+
+  if [ "$DO_PROBE" = "1" ]; then
+    local models_to_probe=()
+    if [ -n "$PROBE_MODEL" ]; then
+      models_to_probe=("$PROBE_MODEL")
+    else
+      while IFS= read -r model_id; do
+        [ -n "$model_id" ] && models_to_probe+=("$model_id")
+      done < <(echo "$response" | jq -r '.data[].id' | sort)
+    fi
+
+    local probe_results='[]'
+    local tmp_dir model_id payload curl_meta body http_code elapsed curl_rc i
+    local headers_file body_file remaining_window stopped=0
+    local probe_delay_seconds=7
+    tmp_dir=$(mktemp -d)
+    headers_file="$tmp_dir/headers"
+    body_file="$tmp_dir/body"
+    echo -e "${BLUE}Probing ${#models_to_probe[@]} model(s) serially; one inference request each, with ${probe_delay_seconds}s spacing...${NC}" >&2
+    for ((i = 0; i < ${#models_to_probe[@]}; i++)); do
+      model_id="${models_to_probe[$i]}"
+      payload=$(jq -n --arg model "$model_id" '{model:$model,messages:[{role:"user",content:"hi"}],max_tokens:8,temperature:0}')
+      curl_meta=$(curl -s --max-time 20 -D "$headers_file" -o "$body_file" -w '%{http_code}\t%{time_total}' \
+        -X POST "$BASE_URL/chat/completions" \
+        -H "Authorization: Bearer $SAIA_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d "$payload") && curl_rc=0 || curl_rc=$?
+      http_code="${curl_meta%%$'\t'*}"
+      elapsed="${curl_meta#*$'\t'}"
+      body=$(cat "$body_file" 2>/dev/null || true)
+      if [ "$curl_rc" -eq 0 ] && [ "$http_code" = "200" ] && echo "$body" | jq -e '.choices[0]' >/dev/null 2>&1; then
+        probe_results=$(echo "$probe_results" | jq --arg id "$model_id" --arg lat "${elapsed}s" --argjson body "$body" \
+          '. + [{id:$id,upstream:($body.model // "-"),runtime:($body.system_fingerprint // "-"),latency:$lat,status:"ok"}]')
+      else
+        local err_msg
+        err_msg=$(echo "$body" | jq -r '.error.message // empty' 2>/dev/null || true)
+        [ -n "$err_msg" ] || err_msg="HTTP ${http_code:-000}"
+        probe_results=$(echo "$probe_results" | jq --arg id "$model_id" --arg lat "${elapsed:-?}s" --arg err "$err_msg" \
+          '. + [{id:$id,upstream:"-",runtime:"-",latency:$lat,status:$err}]')
+      fi
+
+      if [ "$http_code" = "429" ]; then
+        echo -e "${RED}Rate limit reached; stopping further probes.${NC}" >&2
+        stopped=1
+        break
+      fi
+      for remaining_window in minute hour day month; do
+        local remaining
+        remaining=$(tr -d '\r' < "$headers_file" 2>/dev/null | awk -F: -v key="x-ratelimit-remaining-$remaining_window" \
+          'tolower($1)==key {sub(/^[^:]*:[[:space:]]*/, ""); value=$0} END {print value}')
+        if [ "$remaining" = "0" ]; then
+          echo -e "${RED}SAIA $remaining_window quota is exhausted; stopping further probes.${NC}" >&2
+          stopped=1
+          break 2
+        fi
+      done
+
+      if [ "$i" -lt $((${#models_to_probe[@]} - 1)) ]; then
+        sleep "$probe_delay_seconds"
+      fi
+    done
+    rm -rf "$tmp_dir"
+
+    if [ "$LIST_JSON" = "1" ]; then
+      jq -n --argjson models "$response" --argjson probes "$probe_results" \
+        '{models:[$models.data[] as $m | ($probes[] | select(.id == $m.id)) as $p | $m + {probe:$p}],probes:$probes}'
+      return
+    fi
+    printf "%-32s %6s %-10s %-18s %-32s %-32s %10s %s\n" \
+      "MODEL" "DEMAND" "SERVICE" "INPUT" "UPSTREAM" "RUNTIME / ENGINE" "LATENCY" "PROBE"
+    while IFS=$'\t' read -r model_id demand service input upstream runtime latency probe_status; do
+      printf "%-32.32s %6.6s %-10.10s %-18.18s %-32.32s %-32.32s %10.10s %s\n" \
+        "$model_id" "$demand" "$service" "$input" "$upstream" "$runtime" "$latency" "$probe_status"
+    done < <(jq -r --argjson models "$response" --argjson probes "$probe_results" '
+      [$models.data[] as $m | ($probes[] | select(.id == $m.id)) as $p | $m + {probe:$p}]
+      | sort_by(-(.demand // -1), .id)
+        (.[] | [
+          .id,
+          ((.demand // "-") | tostring),
+          (.status // "-"),
+          ((.input // []) | join(",")),
+          (.probe.upstream // "-"),
+          ((.probe.runtime // "-") | if length > 32 then .[0:29] + "..." else . end),
+          (.probe.latency // "-"),
+          (.probe.status // "not probed")
+        ] | @tsv)')
+    if [ "$stopped" = "1" ]; then
+      echo -e "${RED}Probe stopped early; remaining models were not requested.${NC}" >&2
+    fi
+    return
+  fi
 
   if [ "$LIST_JSON" = "1" ]; then
     echo "$response" | jq '.data | sort_by(.id)'
@@ -601,6 +693,8 @@ check_deps
 CLI_ENDPOINT=""
 LIST_SHORT=0
 LIST_JSON=0
+DO_PROBE=0
+PROBE_MODEL=""
 REMAINING_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -655,6 +749,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --json)
       LIST_JSON=1
+      shift 1
+      ;;
+    --probe)
+      DO_PROBE=1
+      if [[ $# -gt 1 && "$2" != -* && "$2" != "models" ]]; then
+        PROBE_MODEL="$2"
+        shift 2
+      else
+        shift 1
+      fi
+      ;;
+    --probe=*)
+      DO_PROBE=1
+      PROBE_MODEL="${1#--probe=}"
       shift 1
       ;;
     -h|--help)
