@@ -331,7 +331,7 @@ list_models() {
     done < <(jq -r --argjson models "$response" --argjson probes "$probe_results" '
       [$models.data[] as $m | ($probes[] | select(.id == $m.id)) as $p | $m + {probe:$p}]
       | sort_by(-(.demand // -1), .id)
-        (.[] | [
+      | .[] | [
           .id,
           ((.demand // "-") | tostring),
           (.status // "-"),
