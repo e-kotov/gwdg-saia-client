@@ -4,6 +4,8 @@ A simple, minimal-dependency Bash CLI interface for the [Scalable Artificial Int
 
 This client provides a minimalistic way to interact with all SAIA service and inference endpoints directly from your terminal, making it ideal for quick testing, shell pipelines, and lightweight automation.
 
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Features
 
 - **Multi-Endpoint Support**: Effortlessly switch between Academic Cloud (default), GWDG SAIA, or any compatible custom gateway/proxy.
