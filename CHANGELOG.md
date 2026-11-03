@@ -3,13 +3,19 @@
 All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project aims to
-follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). No versions have been tagged yet,
-so everything below sits under Unreleased until the first release is cut.
+follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-03
+
+First tagged release of the standalone Bash client.
+
 ### Fixed
 
+- Recognize SAIA's current request-scoped quota headers, including the 10-second window,
+  and display the remaining hourly, daily and monthly requests with their reset times.
+- Stop model probes when a request-scoped quota window is exhausted, as well as on HTTP 429.
 - The human-readable `models --probe` table now runs its jq projection in null-input mode, so the
   catalogue and probe JSON passed as arguments render even when standard input is empty.
 
