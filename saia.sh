@@ -301,7 +301,7 @@ list_models() {
         stopped=1
         break
       fi
-      for remaining_window in minute hour day month; do
+      for remaining_window in 10s minute hour day month requests-10s requests-hour requests-day requests-month; do
         local remaining
         remaining=$(tr -d '\r' < "$headers_file" 2>/dev/null | awk -F: -v key="x-ratelimit-remaining-$remaining_window" \
           'tolower($1)==key {sub(/^[^:]*:[[:space:]]*/, ""); value=$0} END {print value}')
@@ -429,8 +429,25 @@ show_limits() {
 
   get_header_val() {
     local key="$1"
-    echo "$header_block" | { grep -i "^${key}:" || true; } | head -n1 | cut -d':' -f2- | xargs
+    local value
+    value=$(echo "$header_block" | { grep -i "^${key}:" || true; } | head -n1 | cut -d':' -f2- | xargs)
+    if [ -z "$value" ] && [[ "$key" == x-ratelimit-*-* ]]; then
+      # Current SAIA uses limit/remaining/reset-requests-<window>.
+      key="${key%-*}-requests-${key##*-}"
+      value=$(echo "$header_block" | { grep -i "^${key}:" || true; } | head -n1 | cut -d':' -f2- | xargs)
+    fi
+    printf '%s' "$value"
   }
+
+  local lim_10s rem_10s reset_10s_hdr short_reset_suffix=""
+  lim_10s=$(get_header_val "x-ratelimit-limit-10s")
+  rem_10s=$(get_header_val "x-ratelimit-remaining-10s")
+  reset_10s_hdr=$(get_header_val "x-ratelimit-reset-10s")
+  if [ -n "$reset_10s_hdr" ]; then
+    local short_reset
+    short_reset=$(format_reset_time "$reset_10s_hdr" || true)
+    if [ -n "$short_reset" ]; then short_reset_suffix="  (resets in ${short_reset})"; fi
+  fi
 
   local rem_min lim_min rem_hr lim_hr rem_day lim_day rem_mo lim_mo reset_sec
   lim_min=$(get_header_val "x-ratelimit-limit-minute")
@@ -456,10 +473,11 @@ show_limits() {
   reset_day_hdr=$(get_header_val "x-ratelimit-reset-day")
   reset_mo_hdr=$(get_header_val "x-ratelimit-reset-month")
 
-  if [ -n "$lim_min" ] || [ -n "$lim_hr" ] || [ -n "$lim_day" ] || [ -n "$lim_mo" ]; then
+  if [ -n "$lim_10s" ] || [ -n "$lim_min" ] || [ -n "$lim_hr" ] || [ -n "$lim_day" ] || [ -n "$lim_mo" ]; then
     local reset_window="" reset_suffix="" reset_note=""
     local min_reset_suffix="" hr_reset_suffix="" day_reset_suffix="" mo_reset_suffix=""
     local exhausted_windows=()
+    if [[ "$rem_10s" == "0" ]]; then exhausted_windows+=("10s"); fi
     if [[ "$rem_min" == "0" ]]; then exhausted_windows+=("Minute"); fi
     if [[ "$rem_hr" == "0" ]]; then exhausted_windows+=("Hour"); fi
     if [[ "$rem_day" == "0" ]]; then exhausted_windows+=("Day"); fi
@@ -503,6 +521,7 @@ show_limits() {
       fi
 
       case "$reset_window" in
+        10s) short_reset_suffix="$reset_suffix" ;;
         Minute) min_reset_suffix="$reset_suffix" ;;
         Hour) hr_reset_suffix="$reset_suffix" ;;
         Day) day_reset_suffix="$reset_suffix" ;;
@@ -512,6 +531,9 @@ show_limits() {
 
     echo ""
     echo -e "${BLUE}SAIA Account Rate Limits & Quota:${NC}"
+    if [ -n "$lim_10s" ]; then
+      printf "  %-8s %s / %-5s remaining%s\n" "10s:" "${rem_10s:-N/A}" "$lim_10s" "$short_reset_suffix"
+    fi
     printf "  %-8s %s / %-5s remaining%s\n" "Minute:" "${rem_min:-N/A}" "${lim_min:-N/A}" "$min_reset_suffix"
     printf "  %-8s %s / %-5s remaining%s\n" "Hour:" "${rem_hr:-N/A}" "${lim_hr:-N/A}" "$hr_reset_suffix"
     printf "  %-8s %s / %-5s remaining%s\n" "Day:" "${rem_day:-N/A}" "${lim_day:-N/A}" "$day_reset_suffix"
